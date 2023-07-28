@@ -19,8 +19,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::traits::{
-	BaseArithmetic, Bounded, CheckedAdd, CheckedMul, CheckedSub, One, SaturatedConversion,
-	Saturating, UniqueSaturatedInto, Unsigned, Zero,
+	BaseArithmetic, Bounded, CheckedAdd, CheckedDiv, CheckedMul, CheckedSub, One,
+	SaturatedConversion, Saturating, UniqueSaturatedInto, Unsigned, Zero,
 };
 use codec::{CompactAs, Encode};
 use num_traits::{Pow, SaturatingAdd, SaturatingSub};
@@ -146,7 +146,7 @@ pub trait PerThing:
 	/// Return the next lower value to `self` or `self` if it is already zero.
 	fn less_epsilon(self) -> Self {
 		if self.is_zero() {
-			return self
+			return self;
 		}
 		Self::from_parts(self.deconstruct() - One::one())
 	}
@@ -155,7 +155,7 @@ pub trait PerThing:
 	/// zero.
 	fn try_less_epsilon(self) -> Result<Self, Self> {
 		if self.is_zero() {
-			return Err(self)
+			return Err(self);
 		}
 		Ok(Self::from_parts(self.deconstruct() - One::one()))
 	}
@@ -163,7 +163,7 @@ pub trait PerThing:
 	/// Return the next higher value to `self` or `self` if it is already one.
 	fn plus_epsilon(self) -> Self {
 		if self.is_one() {
-			return self
+			return self;
 		}
 		Self::from_parts(self.deconstruct() + One::one())
 	}
@@ -172,7 +172,7 @@ pub trait PerThing:
 	/// one.
 	fn try_plus_epsilon(self) -> Result<Self, Self> {
 		if self.is_one() {
-			return Err(self)
+			return Err(self);
 		}
 		Ok(Self::from_parts(self.deconstruct() + One::one()))
 	}
@@ -455,10 +455,12 @@ impl Rounding {
 		match (rounding, negative) {
 			(Low, true) | (Major, _) | (High, false) => Up,
 			(High, true) | (Minor, _) | (Low, false) => Down,
-			(NearestPrefMajor, _) | (NearestPrefHigh, false) | (NearestPrefLow, true) =>
-				NearestPrefUp,
-			(NearestPrefMinor, _) | (NearestPrefLow, false) | (NearestPrefHigh, true) =>
-				NearestPrefDown,
+			(NearestPrefMajor, _) | (NearestPrefHigh, false) | (NearestPrefLow, true) => {
+				NearestPrefUp
+			},
+			(NearestPrefMinor, _) | (NearestPrefLow, false) | (NearestPrefHigh, true) => {
+				NearestPrefDown
+			},
 		}
 	}
 }
@@ -496,11 +498,26 @@ where
 	(x / maximum) * part_n + c
 }
 
+fn rational_mul_correction<N, P>(x: N, numer: P::Inner, denom: P::Inner, rounding: Rounding) -> N
+where
+	N: MultiplyArg + UniqueSaturatedInto<P::Inner>,
+	P: PerThing,
+	P::Inner: Into<N>,
+{
+	checked_rational_mul_correction::<N, P>(x, numer, denom, rounding)
+		.expect("tries to divide by zero")
+}
+
 /// Compute the error due to integer division in the expression `x / denom * numer`.
 ///
 /// Take the remainder of `x / denom` and multiply by  `numer / denom`. The result can be added
 /// to `x / denom * numer` for an accurate result.
-fn rational_mul_correction<N, P>(x: N, numer: P::Inner, denom: P::Inner, rounding: Rounding) -> N
+fn checked_rational_mul_correction<N, P>(
+	x: N,
+	numer: P::Inner,
+	denom: P::Inner,
+	rounding: Rounding,
+) -> Option<N>
 where
 	N: MultiplyArg + UniqueSaturatedInto<P::Inner>,
 	P: PerThing,
@@ -510,6 +527,9 @@ where
 	let denom_n: N = denom.into();
 	let denom_upper = P::Upper::from(denom);
 	let rem = x.rem(denom_n);
+	if P::Inner::is_zero(&denom) || denom_upper.is_zero() {
+		return None;
+	}
 	// `rem` is less than `denom`, which fits in `P::Inner`.
 	let rem_inner = rem.saturated_into::<P::Inner>();
 	// `P::Upper` always fits `P::Inner::max_value().pow(2)`, thus it fits `rem * numer`.
@@ -540,7 +560,7 @@ where
 			}
 		},
 	}
-	rem_mul_div_inner.into()
+	Some(rem_mul_div_inner.into())
 }
 
 macro_rules! implement_per_thing {
@@ -1018,6 +1038,23 @@ macro_rules! implement_per_thing {
 			#[inline]
 			fn checked_mul(&self, rhs: &Self) -> Option<Self> {
 				Some(*self * *rhs)
+			}
+		}
+
+		/// # Note
+		/// I am not sure if this is the best way to div safely for PerThings
+		impl CheckedDiv for $name {
+			#[inline]
+			fn checked_div(&self, rhs: &Self) -> Option<Self> {
+				let p = self.0;
+				let q = rhs.0;
+
+				if q.is_zero() {
+					return None
+				}
+
+				//Some(Self::from_rational(p, q))
+				Some(*self / *rhs)
 			}
 		}
 
@@ -1737,6 +1774,23 @@ macro_rules! implement_per_thing {
 					Some($name::from_percent(0))
 				);
 			}
+
+            #[test]
+            fn test_basic_checked_div() {
+                assert_eq!(
+                    $name::from_parts($max).checked_div(&$name::from_parts($max)),
+                    Some($name::from_percent(100))
+                );
+				assert_eq!(
+					$name::from_percent(100).checked_div(&$name::from_percent(100)),
+					Some($name::from_percent(100))
+				);
+                /// Division by zero
+                assert_eq!(
+                    $name::from_percent(0).checked_div(&$name::from_percent(0)),
+                    None
+                );
+            }
 		}
 	};
 }
