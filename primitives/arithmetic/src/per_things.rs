@@ -498,6 +498,7 @@ where
 	(x / maximum) * part_n + c
 }
 
+/// Wrapper of checked function
 fn rational_mul_correction<N, P>(x: N, numer: P::Inner, denom: P::Inner, rounding: Rounding) -> N
 where
 	N: MultiplyArg + UniqueSaturatedInto<P::Inner>,
@@ -512,6 +513,8 @@ where
 ///
 /// Take the remainder of `x / denom` and multiply by  `numer / denom`. The result can be added
 /// to `x / denom * numer` for an accurate result.
+///
+/// Checking if &denon is zero should cover denom_n and denom_upper
 fn checked_rational_mul_correction<N, P>(
 	x: N,
 	numer: P::Inner,
@@ -527,7 +530,7 @@ where
 	let denom_n: N = denom.into();
 	let denom_upper = P::Upper::from(denom);
 	let rem = x.rem(denom_n);
-	if P::Inner::is_zero(&denom) || denom_upper.is_zero() {
+	if P::Inner::is_zero(&denom) {
 		return None;
 	}
 	// `rem` is less than `denom`, which fits in `P::Inner`.
